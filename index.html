@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>愛澤アトラクタ キャンバス</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #080812; }
+  canvas { display: block; }
+  input[type=range] { accent-color: #f97316; }
+</style>
+</head>
+<body class="text-white min-h-screen p-4">
+<div class="max-w-4xl mx-auto">
+  <h1 class="text-2xl font-bold mb-1 text-orange-300">愛澤 アトラクタ</h1>
+  <p class="text-gray-400 text-sm mb-4">Aizawa方程式パラメータ系による3Dカオスアトラクタ（RK4法）</p>
+
+  <div class="flex flex-wrap gap-4">
+    <div>
+      <canvas id="canvas" width="520" height="520" class="border border-orange-900 rounded"></canvas>
+    </div>
+
+    <div class="w-60 flex flex-col gap-3 text-sm">
+
+      <!-- Equation -->
+      <div class="bg-gray-900 rounded p-3 text-xs font-mono text-orange-400">
+        <div class="text-gray-400 mb-1">Aizawa方程式</div>
+        <div>dx = (z-b)x - d·y</div>
+        <div>dy = d·x + (z-b)y</div>
+        <div>dz = c + a·z - z³/3</div>
+        <div class="text-gray-500 text-xs">　　 - (x²+y²)(1+e·z)</div>
+        <div class="text-gray-500 text-xs">　　 + f·z·x³</div>
+      </div>
+
+      <!-- Sliders a, b, c, d -->
+      <div class="bg-gray-900 rounded p-3">
+        <div class="text-orange-300 font-semibold mb-2">パラメータ</div>
+
+        <label class="text-gray-300 text-xs">a <span id="aVal" class="text-orange-400">0.95</span></label>
+        <input type="range" id="sliderA" min="0.5" max="1.5" step="0.01" value="0.95" class="w-full mb-1">
+
+        <label class="text-gray-300 text-xs">b <span id="bVal" class="text-orange-400">0.70</span></label>
+        <input type="range" id="sliderB" min="0.1" max="1.5" step="0.01" value="0.70" class="w-full mb-1">
+
+        <label class="text-gray-300 text-xs">c <span id="cVal" class="text-orange-400">0.60</span></label>
+        <input type="range" id="sliderC" min="0.1" max="1.2" step="0.01" value="0.60" class="w-full mb-1">
+
+        <label class="text-gray-300 text-xs">d <span id="dVal" class="text-orange-400">3.50</span></label>
+        <input type="range" id="sliderD" min="1.0" max="6.0" step="0.05" value="3.50" class="w-full">
+      </div>
+
+      <!-- Projection -->
+      <div class="bg-gray-900 rounded p-3">
+        <label class="text-orange-300 font-semibold block mb-2">投影面</label>
+        <div class="flex gap-3">
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input type="radio" name="proj" value="xy" checked class="accent-orange-400"> X-Y
+          </label>
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input type="radio" name="proj" value="xz"> X-Z
+          </label>
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input type="radio" name="proj" value="yz"> Y-Z
+          </label>
+        </div>
+      </div>
+
+      <!-- Step size -->
+      <div class="bg-gray-900 rounded p-3">
+        <label class="text-orange-300 font-semibold">時間刻み (dt)</label>
+        <input type="range" id="dtSlider" min="1" max="20" value="8" class="w-full mt-1">
+        <div class="text-gray-400 text-xs mt-1" id="dtInfo">dt = 0.008</div>
+      </div>
+
+      <!-- Speed -->
+      <div class="bg-gray-900 rounded p-3">
+        <label class="text-orange-300 font-semibold">速度</label>
+        <input type="range" id="speedSlider" min="1" max="30" value="10" class="w-full mt-1">
+        <div class="text-gray-400 text-xs mt-1" id="speedInfo">10 ステップ/フレーム</div>
+      </div>
+
+      <!-- Buttons -->
+      <div class="flex flex-col gap-2">
+        <button id="btnToggle" class="bg-orange-700 hover:bg-orange-600 py-2 px-3 rounded transition" aria-label="停止/再開">一時停止</button>
+        <button id="btnReset" class="bg-gray-700 hover:bg-gray-600 py-2 px-3 rounded transition" aria-label="リセット">リセット</button>
+      </div>
+
+      <div class="bg-gray-900 rounded p-3 text-xs text-gray-400" id="statsBox">
+        ステップ数: 0
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+// Aizawa params
+let PA = 0.95, PB = 0.70, PC = 0.60, PD = 3.50;
+const PE = 0.25, PF = 0.1;
+
+let proj = 'xy';
+let dt = 0.008;
+let stepsPerFrame = 10;
+let running = true;
+let totalSteps = 0;
+let hue = 0;
+
+// RK4 step
+function aizawaDerivs(x, y, z) {
+  const dx = (z - PB) * x - PD * y;
+  const dy = PD * x + (z - PB) * y;
+  const dz = PC + PA * z - (z * z * z) / 3 - (x * x + y * y) * (1 + PE * z) + PF * z * x * x * x;
+  return [dx, dy, dz];
+}
+
+function rk4Step(x, y, z) {
+  const [k1x, k1y, k1z] = aizawaDerivs(x, y, z);
+  const [k2x, k2y, k2z] = aizawaDerivs(x + k1x*dt/2, y + k1y*dt/2, z + k1z*dt/2);
+  const [k3x, k3y, k3z] = aizawaDerivs(x + k2x*dt/2, y + k2y*dt/2, z + k2z*dt/2);
+  const [k4x, k4y, k4z] = aizawaDerivs(x + k3x*dt, y + k3y*dt, z + k3z*dt);
+  return [
+    x + dt/6 * (k1x + 2*k2x + 2*k3x + k4x),
+    y + dt/6 * (k1y + 2*k2y + 2*k3y + k4y),
+    z + dt/6 * (k1z + 2*k2z + 2*k3z + k4z)
+  ];
+}
+
+let state = [0.1, 0.0, 0.0];
+
+function project(x, y, z) {
+  const scale = 75;
+  const cx = W / 2, cy = H / 2;
+  switch(proj) {
+    case 'xy': return [cx + x * scale, cy + y * scale];
+    case 'xz': return [cx + x * scale, cy - z * scale];
+    case 'yz': return [cx + y * scale, cy - z * scale];
+  }
+}
+
+// Trail canvas
+const trail = document.createElement('canvas');
+trail.width = W; trail.height = H;
+const tCtx = trail.getContext('2d');
+
+function clearAll() {
+  tCtx.clearRect(0, 0, W, H);
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#080812';
+  ctx.fillRect(0, 0, W, H);
+  state = [0.1, 0.0, 0.0];
+  totalSteps = 0;
+  hue = 0;
+}
+
+function animate() {
+  if (running) {
+    for (let s = 0; s < stepsPerFrame; s++) {
+      const [nx, ny, nz] = rk4Step(...state);
+      const [px1, py1] = project(...state);
+      const [px2, py2] = project(nx, ny, nz);
+
+      tCtx.beginPath();
+      tCtx.moveTo(px1, py1);
+      tCtx.lineTo(px2, py2);
+      tCtx.strokeStyle = `hsla(${hue},90%,60%,0.8)`;
+      tCtx.lineWidth = 0.7;
+      tCtx.stroke();
+
+      state = [nx, ny, nz];
+      totalSteps++;
+      hue = (hue + 0.15) % 360;
+    }
+
+    // Fade + composite
+    ctx.fillStyle = 'rgba(8,8,18,0.05)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.drawImage(trail, 0, 0);
+
+    // Current point
+    const [px, py] = project(...state);
+    ctx.beginPath();
+    ctx.arc(px, py, 3, 0, Math.PI * 2);
+    ctx.fillStyle = `hsl(${hue},100%,85%)`;
+    ctx.fill();
+
+    document.getElementById('statsBox').textContent = `ステップ数: ${totalSteps.toLocaleString()}`;
+  }
+
+  requestAnimationFrame(animate);
+}
+
+// Controls
+function bindSlider(id, valId, setter, decimals) {
+  document.getElementById(id).addEventListener('input', function() {
+    const v = parseFloat(this.value);
+    setter(v);
+    document.getElementById(valId).textContent = v.toFixed(decimals);
+    clearAll();
+  });
+}
+bindSlider('sliderA', 'aVal', v => PA = v, 2);
+bindSlider('sliderB', 'bVal', v => PB = v, 2);
+bindSlider('sliderC', 'cVal', v => PC = v, 2);
+bindSlider('sliderD', 'dVal', v => PD = v, 2);
+
+document.querySelectorAll('input[name=proj]').forEach(r => {
+  r.addEventListener('change', function() { proj = this.value; clearAll(); });
+});
+
+document.getElementById('dtSlider').addEventListener('input', function() {
+  dt = parseInt(this.value) * 0.001;
+  document.getElementById('dtInfo').textContent = `dt = ${dt.toFixed(3)}`;
+  clearAll();
+});
+
+document.getElementById('speedSlider').addEventListener('input', function() {
+  stepsPerFrame = parseInt(this.value);
+  document.getElementById('speedInfo').textContent = `${stepsPerFrame} ステップ/フレーム`;
+});
+
+document.getElementById('btnToggle').addEventListener('click', function() {
+  running = !running;
+  this.textContent = running ? '一時停止' : '再開';
+  this.classList.toggle('bg-yellow-700', !running);
+  this.classList.toggle('bg-orange-700', running);
+});
+
+document.getElementById('btnReset').addEventListener('click', clearAll);
+
+clearAll();
+animate();
+</script>
+</body>
+</html>
